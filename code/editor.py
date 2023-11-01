@@ -103,7 +103,7 @@ class Editor:
 				self.check_neighbors(current_cell)
 				self.last_selected_cell = current_cell
 
-	def draw_tile_lines(self):
+	def draw_grid_lines(self):
 		cols = WINDOW_WIDTH // TILE_SIZE
 		rows = WINDOW_HEIGHT// TILE_SIZE
 		origin_offset = vector(
@@ -149,7 +149,7 @@ class Editor:
 		self.event_loop()
 		self.display_surface.fill('gray')
 		self.draw_level()
-		self.draw_tile_lines()
+		self.draw_grid_lines()
 		pygame.draw.circle(self.display_surface, 'red', self.origin, 10)
 		self.menu.display(self.selection_index)
 
