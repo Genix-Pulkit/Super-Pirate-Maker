@@ -5,6 +5,7 @@ from pygame.mouse import get_pos as mouse_pos
 from pygame.image import load
 from settings import *
 from menu import Menu
+from support import *
 
 class Editor:
 	def __init__(self, land_tiles):
@@ -21,6 +22,16 @@ class Editor:
 		self.selection_index = 2
 		self.last_selected_cell = None
 		self.menu = Menu()
+		self.canvas_objects = pygame.sprite.Group()
+		self.object_drag_active = False
+		CanvasObject(
+			pos = (200, WINDOW_HEIGHT / 2),
+			frames = self.animations[0]['frames'],
+			tile_id = 0,
+			origin = self.origin,
+			group = self.canvas_objects
+		)
+		self.sky_handle = CanvasObject()
 
 
 	def get_current_cell(self):
@@ -61,6 +72,22 @@ class Editor:
 
 	def import_graphic(self):
 		self.water_bottom = load('../graphics/terrain/water/water_bottom.png')
+		self.sky_handle_surf = load('../graphics/cursors/handle.png')
+		self.animations = {}
+		for key, value in EDITOR_DATA.items():
+			if value['graphics']:
+				graphics = import_folder(value['graphics'])
+				self.animations[key] = {
+					'frame index' : 0,
+					'frames' : graphics,
+					'length' : len(graphics)
+				}
+
+	def animation_update(self, dt):
+		for value in self.animations.values():
+			value['frame index'] += ANIMATION_SPEED * dt
+			if value['frame index'] >= value['length']:
+				value['frame index'] = 0
 
 	def event_loop(self):
 		for event in pygame.event.get():
@@ -70,7 +97,9 @@ class Editor:
 			self.pan_input(event)
 			self.selection_hotkeys(event)
 			self.menu_click(event)
+			self.object_drag(event)
 			self.canvas_add()
+			self.canvas_remove()
 
 	def pan_input(self, event):
 		if event.type == pygame.MOUSEBUTTONDOWN and mouse_buttons()[1]:
@@ -88,6 +117,8 @@ class Editor:
 
 		if self.pan_active:
 			self.origin = vector(mouse_pos()) - self.pan_offset
+			for sprite in self.canvas_objects:
+				sprite.pan_pos(self.origin)
 
 	def selection_hotkeys(self, event):
 		if event.type == pygame.KEYDOWN:
@@ -102,7 +133,7 @@ class Editor:
 			self.selection_index = self.menu.click(mouse_pos(), mouse_buttons())
 
 	def canvas_add(self):
-		if mouse_buttons()[0] and not self.menu.rect.collidepoint(mouse_pos()):
+		if mouse_buttons()[0] and not self.menu.rect.collidepoint(mouse_pos()) and not self.object_drag_active:
 			current_cell = self.get_current_cell()
 			if current_cell != self.last_selected_cell:
 				if current_cell in self.canvas_data:
@@ -111,6 +142,30 @@ class Editor:
 					self.canvas_data[current_cell] = CanvasTile(self.selection_index)
 				self.check_neighbors(current_cell)
 				self.last_selected_cell = current_cell
+
+	def canvas_remove(self):
+		if mouse_buttons()[2] and not self.menu.rect.collidepoint(mouse_pos()):
+			if self.canvas_data:
+				current_cell = self.get_current_cell()
+				if current_cell in self.canvas_data:
+					self.canvas_data[current_cell].remove_id(self.selection_index)
+
+					if self.canvas_data[current_cell].is_empty:
+						del self.canvas_data[current_cell]
+
+					self.check_neighbors(current_cell)
+
+	def object_drag(self, event):
+		if event.type == pygame.MOUSEBUTTONDOWN and mouse_buttons()[0]:
+			for sprite in self.canvas_objects:
+				if sprite.rect.collidepoint(event.pos):
+					sprite.start_drag()
+					self.object_drag_active = True
+
+		if event.type == pygame.MOUSEBUTTONUP and self.object_drag_active:
+			for sprite in self.canvas_objects:
+				sprite.end_drag(origin = self.origin)
+				self.object_drag_active = False
 
 	def draw_grid_lines(self):
 		cols = WINDOW_WIDTH // TILE_SIZE
@@ -138,9 +193,10 @@ class Editor:
 				if tile.water_on_top:
 					self.display_surface.blit(self.water_bottom, pos)
 				else:
-					test_surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
-					test_surf.fill('blue')
-					self.display_surface.blit(test_surf, pos)
+					frames = self.animations[3]['frames']
+					index = int(self.animations[3]['frame index'])
+					surf = frames[index]
+					self.display_surface.blit(surf, pos)
 
 			if tile.has_terrain:
 				terrain_string = ''.join(tile.terrain_neighbors)
@@ -148,17 +204,24 @@ class Editor:
 				self.display_surface.blit(self.land_tiles[terrain_style], pos)
 
 			if tile.coin:
-				test_surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
-				test_surf.fill('yellow')
-				self.display_surface.blit(test_surf, pos)
+				frames = self.animations[tile.coin]['frames']
+				index = int(self.animations[tile.coin]['frame index'])
+				surf = frames[index]
+				rect = surf.get_rect(center = (pos[0] + TILE_SIZE // 2, pos[1] + TILE_SIZE // 2))
+				self.display_surface.blit(surf, rect)
 
 			if tile.enemy:
-				test_surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
-				test_surf.fill('red')
-				self.display_surface.blit(test_surf, pos)
+				frames = self.animations[tile.enemy]['frames']
+				index = int(self.animations[tile.enemy]['frame index'])
+				surf = frames[index]
+				rect = surf.get_rect(midbottom = (pos[0] + TILE_SIZE // 2, pos[1] + TILE_SIZE))
+				self.display_surface.blit(surf, rect)
+		self.canvas_objects.draw(self.display_surface)
 
 	def run(self, dt):
 		self.event_loop()
+		self.animation_update(dt)
+		self.canvas_objects.update(dt)
 		self.display_surface.fill('gray')
 		self.draw_level()
 		self.draw_grid_lines()
@@ -175,6 +238,7 @@ class CanvasTile:
 		self.enemy = None
 		self.objects = []
 		self.add_id(tile_id)
+		self.is_empty = False
 
 	def add_id(self, tile_id):
 		options = {key: value['style'] for key, value in EDITOR_DATA.items()}
@@ -183,3 +247,56 @@ class CanvasTile:
 			case 'water': self.has_water = True
 			case 'coin': self.coin = tile_id
 			case 'enemy': self.enemy = tile_id
+
+	def remove_id(self, tile_id):
+		options = {key: value['style'] for key, value in EDITOR_DATA.items()}
+		match options[tile_id]:
+			case 'terrain': self.has_terrain = False
+			case 'water' : self.has_water = False
+			case 'coin': self.coin = None
+			case 'enemy': self.enemy = None
+		self.check_content()
+
+
+	def check_content(self):
+		if not self.has_terrain and not self.has_water and not self.coin and not self.enemy:
+			self.is_empty = True
+
+class CanvasObject(pygame.sprite.Sprite):
+	def __init__(self, pos, frames, tile_id, origin, group):
+		super().__init__(group)
+		self.tile_id = tile_id
+		self.frames = frames
+		self.frame_index = 0
+
+		self.image = self.frames[self.frame_index]
+		self.rect = self.image.get_rect(center = pos)
+
+		self.distance_to_origin = vector(self.rect.topleft) - origin
+		self.selected = False
+		self.mouse_offset = vector()
+
+	def start_drag(self):
+		self.selected = True
+		self.mouse_offset = vector(mouse_pos()) - vector(self.rect.topleft)
+
+	def drag(self):
+		if self.selected:
+			self.rect.topleft = vector(mouse_pos()) - self.mouse_offset
+
+	def end_drag(self, origin):
+		self.selected = False
+		self.distance_to_origin = vector(self.rect.topleft) - origin
+
+	def animate(self, dt):
+		self.frame_index += ANIMATION_SPEED * dt
+		self.frame_index = 0 if self.frame_index >= len(self.frames) else self.frame_index
+		self.image = self.frames[int(self.frame_index)]
+		self.rect = self.image.get_rect(midbottom = self.rect.midbottom)
+
+	def pan_pos(self, origin):
+		self.rect.topleft = origin + self.distance_to_origin
+
+	def update(self, dt):
+		self.animate(dt)
+		self.drag()
